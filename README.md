@@ -1,139 +1,151 @@
 <div align="center">
 
-# GoDir
+# FsHost
 
-**Fast, beautiful local file sharing over your WiFi network.**
+**A fast, zero-dependency file server for your local network.**
 
-Share any folder on your local network with a single command. Browse, navigate, and download files from any device — phone, tablet, laptop — through a sleek dark-themed web interface.
+Share any folder over WiFi with a single command. Browse, navigate, and download files from any device — phone, tablet, or laptop — through a polished, dark-themed web interface.
 
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
-[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-333?style=for-the-badge&logo=apple&logoColor=white)](https://github.com)
+[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-333?style=for-the-badge)](https://github.com)
+[![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
 </div>
 
 ---
 
+## Overview
+
+FsHost is a single static binary that turns any folder into a website for your local network. Point it at a directory, and anyone connected to your WiFi can browse and download its contents from a browser — no accounts, no config files, no dependencies.
+
+```
+  ______   _    _           _
+ |  ____| | |  | |         | |
+ | |__ ___| |__| | ___  ___| |_
+ |  __/ __|  __  |/ _ \/ __| __|
+ | |  \__ \ |  | | (_) \__ \ |_
+ |_|  |___/_|  |_|\___/|___/\__|
+```
+
 ## Features
 
-- **Zero dependencies** — single compiled binary, no runtime required
-- **Auto IP detection** — finds your WiFi IP (192.x.x.x) automatically
-- **Dark web UI** — responsive, animated, type-aware file icons
-- **Fast** — pure Go HTTP server, handles thousands of concurrent connections
-- **Secure by default** — only serves the directory you specify, no access to parent paths
+- **Single binary, zero dependencies** — statically compiled, nothing to install on the server.
+- **Automatic IP detection** — picks your LAN address (`192.168.x.x`) and prints ready-to-open URLs.
+- **Dark, responsive web UI** — animated, type-aware file icons, breadcrumbs, and a mobile-friendly layout.
+- **Fast and concurrent** — pure Go `net/http`, handles many simultaneous connections and resumeable downloads (HTTP Range).
+- **Contained by design** — serves only the directory you specify; path traversal is blocked at the filesystem level.
+- **Hidden-file aware** — dotfiles are excluded from listings (but remain fetchable by direct URL if you know the name).
 
-## Quick Start
+## Requirements
+
+- Go **1.21+** (only needed to build from source)
+- A network adapter with a routable IP (WiFi, Ethernet, VPN)
+
+## Installation
 
 ### Build from source
 
 ```bash
-git clone https://github.com/n11kol11c/GoDir.git
-cd GoDir
-go build -o GoDir .
-```
-
-### Run
-
-```bash
-# Share the current directory
-./GoDir
-
-# Share a specific folder
-./GoDir -dir ~/Documents
-
-# Custom port
-./GoDir -port 3000
-
-# Share a folder on a custom port
-./GoDir -dir /path/to/files -port 5000
+git clone https://github.com/n11kol11c/FsHost.git
+cd FsHost
+go build -o FsHost .
 ```
 
 ### Install with `go install`
 
 ```bash
-go install github.com/n11kol11c/GoDir@latest
+go install github.com/n11kol11c/FsHost@latest
+```
+
+### Embed the version at build time
+
+The version string defaults to `1.0.0` but can be injected:
+
+```bash
+go build -ldflags "-X main.version=2.3.1" -o FsHost .
 ```
 
 ## Usage
 
 ```
-GoDir [flags]
+FsHost [flags]
 
 Flags:
   -dir string    Directory to share (default ".")
   -port int      Port to serve on (default 8080)
 ```
 
-When GoDir starts, it prints a styled banner with the URL to open:
+### Examples
+
+```bash
+# Share the current directory
+FsHost
+
+# Share a specific folder (supports ~)
+FsHost -dir ~/Documents
+
+# Serve on a custom port
+FsHost -port 3000
+
+# Share a build output for your team
+FsHost -dir ./build -port 9090
+```
+
+### What you'll see
 
 ```
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║ 				██████╗  ██████╗ ██████╗ ██╗██████╗                  ║ 
-║ 				██╔════╝ ██╔═══██╗██╔══██╗██║██╔══██╗		             ║ 
-║ 				██║  ███╗██║   ██║██║  ██║██║██████╔╝		             ║ 
-║ 				██║   ██║██║   ██║██║  ██║██║██╔══██╗		             ║ 
-║ 				╚██████╔╝╚██████╔╝██████╔╝██║██║  ██║		             ║ 
-║ 				╚═════╝  ╚═════╝ ╚═════╝ ╚═╝╚═╝  ╚═╝		             ║ 
-║                                      						             ║ 
-║               Share files on your local network              ║
-╚══════════════════════════════════════════════════════════════╝
-
   📂 Serving:  /Users/you/Documents
-  🌐 Network:  http://*****:8080
+  🌐 Network:  http://192.168.1.23:8080
   💻 Local:    http://localhost:8080
-  ⏱  Started:  2025-07-19 21:11:52
-  🛡  OS:       *
+  ⏱  Started:  2026-08-13 21:30:00
+  🛡  OS:       darwin
 
   ✔ Server is live! Open the link above in any browser on your network.
 ```
 
-Open the **Network URL** on any device connected to your WiFi to browse and download files.
+Open the **Network** URL from any device on the same network to browse and download files. Press `Ctrl+C` to stop — FsHost shuts down gracefully and drains in-flight requests.
 
 ## Web Interface
 
-The browser UI provides:
-
 | Feature | Description |
 |---|---|
-| **Breadcrumbs** | Click any parent folder in the path to navigate up |
-| **File icons** | Emoji icons matched by file extension (images, videos, archives, code, etc.) |
-| **File sizes** | Human-readable sizes (KB, MB, GB) |
-| **Mod dates** | Last modified timestamp for each entry |
-| **Download** | Click any file to download it directly |
-| **Mobile** | Fully responsive layout for phones and tablets |
-| **Animations** | Subtle fade-in rows and glow effects |
+| **Breadcrumbs** | Click any ancestor folder to jump back up the path |
+| **Parent link** | A `..` entry at the top of each listing |
+| **File icons** | Emoji matched to extension — images, video, audio, archives, code, docs, and more |
+| **Sizes & dates** | Human-readable sizes (KB / MB / GB) and last-modified timestamps |
+| **Direct download** | Click any file to download it (with resume support) |
+| **Safe URLs** | Filenames with spaces, `#`, `?`, and other special characters are correctly escaped |
+| **Responsive** | Optimized layout for phones, tablets, and desktops |
 
-## Examples
+## Development
 
 ```bash
-# Share your Downloads folder for a quick transfer to your phone
-./GoDir -dir ~/Downloads
-
-# Run a temporary server on a shared project folder for your team
-./GoDir -dir ./build -port 9090
-
-# Share your home directory (use on trusted networks only)
-./GoDir -dir ~
+go build ./...     # compile
+go vet ./...       # static checks
+go build -o FsHost . && ./FsHost -dir ./testdata   # run locally
 ```
+
+The web UI lives in [`theme/theme.go`](theme/theme.go) as a Go raw string; no build step or bundler is needed.
 
 ## Platform Notes
 
-| OS | Default port | Notes |
-|---|---|---|
-| macOS | 8080 | Works out of the box. May prompt for network permissions on first run. |
-| Linux | 8080 | Works out of the box. Use ports > 1024 to avoid root. |
-| Windows | 8080 | Works out of the box. Firewall may prompt — allow access for your network. |
+| OS | Notes |
+|---|---|
+| macOS | Works out of the box; may prompt for network permissions on first run |
+| Linux | Works out of the box; use ports > 1024 to avoid needing root |
+| Windows | Works out of the box; the firewall may ask to allow inbound access |
 
 ## Security Considerations
 
-- GoDir only serves files under the directory you specify — it cannot escape to parent directories.
-- Hidden files (dotfiles) are hidden from the web UI but still accessible via direct URL.
-- Do not expose GoDir to the public internet. It has no authentication.
-- Use it on **trusted local networks** only.
+- FsHost has **no authentication** — anything on the network can read the shared folder. Use it only on networks you trust.
+- It refuses to follow paths outside the shared root, even with crafted `..` or encoded traversal attempts.
+- Symlinks inside the shared folder are followed like any file manager would.
+- **Do not expose FsHost to the public internet.** It is designed for trusted local networks.
+- Hidden files are hidden from listings but still reachable by direct URL; do not rely on this as access control.
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+Released under the [MIT License](https://opensource.org/licenses/MIT).
 
 ---
 
