@@ -15,23 +15,20 @@ import (
 	"syscall"
 	"time"
 
-	"GoDir/theme"
+	"FsHost/theme"
 )
 
 var (
 	version = "1.0.0"
 	banner  = `
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║ 				██████╗  ██████╗ ██████╗ ██╗██████╗            ║ 
-║ 				██╔════╝ ██╔═══██╗██╔══██╗██║██╔══██╗		   ║ 
-║ 				██║  ███╗██║   ██║██║  ██║██║██████╔╝		   ║ 
-║ 				██║   ██║██║   ██║██║  ██║██║██╔══██╗		   ║ 
-║ 				╚██████╔╝╚██████╔╝██████╔╝██║██║  ██║		   ║ 
-║ 				╚═════╝  ╚═════╝ ╚═════╝ ╚═╝╚═╝  ╚═╝		   ║ 
-║                                      						   ║ 
-║               Share files on your local network              ║
-╚══════════════════════════════════════════════════════════════╝`
+  ______   _    _           _   
+ |  ____| | |  | |         | |  
+ | |__ ___| |__| | ___  ___| |_ 
+ |  __/ __|  __  |/ _ \/ __| __|
+ | |  \__ \ |  | | (_) \__ \ |_ 
+ |_|  |___/_|  |_|\___/|___/\__|
+                                
+    `
 
 	colorReset  = "\033[0m"
 	colorCyan   = "\033[36m"
@@ -371,6 +368,7 @@ func newFileServer(rootDir string) http.Handler {
 
 	return logMiddleware(mux)
 }
+
 func logMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
