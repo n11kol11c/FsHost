@@ -1,3 +1,3 @@
-module GoDir
+module FsHost
 
 go 1.21
