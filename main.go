@@ -1,16 +1,20 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"html/template"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -41,17 +45,25 @@ var (
 )
 
 func main() {
-	port := flag.Int("port", 8080, "Port to serve on")
+	port := flag.Int("port", 8080, "Port to serve on (1-65535)")
 	dir := flag.String("dir", ".", "Directory to share")
 	flag.Parse()
 
-	absDir, err := filepath.Abs(*dir)
+	if *port < 1 || *port > 65535 {
+		log.Fatalf("%s✖ Invalid port:%s %d (must be between 1 and 65535)\n", colorRed, colorReset, *port)
+	}
+
+	absDir, err := filepath.Abs(expandHome(*dir))
 	if err != nil {
 		log.Fatalf("%s✖ Error resolving directory:%s %v\n", colorRed, colorReset, err)
 	}
 
-	if _, err := os.Stat(absDir); os.IsNotExist(err) {
+	info, err := os.Stat(absDir)
+	if err != nil {
 		log.Fatalf("%s✖ Directory does not exist:%s %s\n", colorRed, colorReset, absDir)
+	}
+	if !info.IsDir() {
+		log.Fatalf("%s✖ Not a directory:%s %s\n", colorRed, colorReset, absDir)
 	}
 
 	ip := getLocalIP()
@@ -66,12 +78,11 @@ func main() {
 	fmt.Println()
 	fmt.Printf("  %s%sPress Ctrl+C to stop serving%s\n", colorDim, colorYellow, colorReset)
 	fmt.Println()
-
-	handler := newFileServer(absDir)
+	fmt.Printf("  %s✔ Server is live! Open the link above in any browser on your network.%s\n\n", colorGreen, colorReset)
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", *port),
-		Handler:      handler,
+		Handler:      newFileServer(absDir),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -81,37 +92,48 @@ func main() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
-		fmt.Printf("\n\n  %s🛑 Shutting down GoDir...%s\n", colorRed, colorReset)
-		server.Close()
+		fmt.Printf("\n\n  %s🛑 Shutting down FsHost...%s\n", colorRed, colorReset)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(ctx); err != nil {
+			log.Printf("%s⚠ Graceful shutdown failed:%s %v\n", colorYellow, colorReset, err)
+		}
 	}()
 
-	fmt.Printf("  %s✔ Server is live! Open the link above in any browser on your network.%s\n\n", colorGreen, colorReset)
-
-	if err := server.ListenAndServe(); err != http.ErrServerClosed {
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("%s✖ Server error:%s %v\n", colorRed, colorReset, err)
 	}
 
-	fmt.Printf("  %s👋 GoDir stopped. Goodbye!%s\n\n", colorGreen, colorReset)
+	fmt.Printf("  %s👋 FsHost stopped. Goodbye!%s\n\n", colorGreen, colorReset)
+}
+
+func expandHome(p string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p
+	}
+	switch {
+	case p == "~":
+		return home
+	case strings.HasPrefix(p, "~/"):
+		return filepath.Join(home, strings.TrimPrefix(p, "~/"))
+	default:
+		return p
+	}
 }
 
 func printBanner() {
 	lines := strings.Split(banner, "\n")
-	cyan := "\033[36m"
-	bold := "\033[1m"
-	reset := "\033[0m"
-	dim := "\033[2m"
-	yellow := "\033[33m"
-
 	fmt.Println()
 	for i, line := range lines {
 		if i < len(lines)-1 {
-			fmt.Printf("  %s%s%s%s\n", cyan, bold, line, reset)
+			fmt.Printf("  %s%s%s%s\n", colorCyan, colorBold, line, colorReset)
 		} else {
-			fmt.Printf("  %s%s%s%s\n", dim, yellow, line, reset)
+			fmt.Printf("  %s%s%s%s\n", colorDim, colorYellow, line, colorReset)
 		}
 	}
 	fmt.Println()
-	fmt.Printf("  %s%s v%s %s— Fast, beautiful local file sharing%s\n\n", bold, cyan, version, dim, reset)
+	fmt.Printf("  %s%sFsHost v%s %s— Fast, beautiful local file sharing%s\n\n", colorBold, colorCyan, version, colorDim, colorReset)
 }
 
 func getLocalIP() string {
@@ -120,6 +142,7 @@ func getLocalIP() string {
 		return "localhost"
 	}
 
+	var candidates []net.IP
 	for _, iface := range ifaces {
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
@@ -143,37 +166,18 @@ func getLocalIP() string {
 				continue
 			}
 			if ip4 := ip.To4(); ip4 != nil {
-				octets := strings.Split(ip4.String(), ".")
-				if len(octets) == 4 && octets[0] == "192" {
-					return ip4.String()
-				}
+				candidates = append(candidates, ip4)
 			}
 		}
 	}
 
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
+	for _, ip := range candidates {
+		if strings.HasPrefix(ip.String(), "192.") {
+			return ip.String()
 		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, addr := range addrs {
-			var ip net.IP
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-			if ip == nil || ip.IsLoopback() {
-				continue
-			}
-			if ip4 := ip.To4(); ip4 != nil {
-				return ip4.String()
-			}
-		}
+	}
+	if len(candidates) > 0 {
+		return candidates[0].String()
 	}
 	return "localhost"
 }
@@ -185,6 +189,169 @@ type fileInfo struct {
 	ModTime string
 	Icon    string
 	Ext     string
+	Href    string
+}
+
+type breadcrumbPart struct {
+	Name string
+	Path string
+}
+
+type pageData struct {
+	Title     string
+	Bread     []breadcrumbPart
+	Files     []fileInfo
+	IPAddress string
+	Version   string
+	NumFiles  int
+}
+
+func newFileServer(rootDir string) http.Handler {
+	tmpl := template.Must(template.New("dir").Parse(theme.PageTemplate))
+	fileServer := http.FileServer(http.Dir(rootDir))
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fullPath, ok := safeJoin(rootDir, r.URL.Path)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+
+		info, err := os.Stat(fullPath)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		if !info.IsDir() {
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		if !strings.HasSuffix(r.URL.Path, "/") {
+			http.Redirect(w, r, escapeURLPath(r.URL.Path)+"/", http.StatusMovedPermanently)
+			return
+		}
+
+		entries, err := os.ReadDir(fullPath)
+		if err != nil {
+			http.Error(w, "Cannot read directory", http.StatusInternalServerError)
+			return
+		}
+
+		base := escapeURLPath(strings.TrimSuffix(r.URL.Path, "/")) + "/"
+
+		listing := make([]fileInfo, 0, len(entries)+1)
+		if trimmed := strings.TrimSuffix(r.URL.Path, "/"); trimmed != "" {
+			listing = append(listing, fileInfo{
+				Name:    "..",
+				Size:    "-",
+				IsDir:   true,
+				ModTime: "-",
+				Icon:    "\u2B06",
+				Ext:     "",
+				Href:    escapeURLPath(path.Join(trimmed, "..")),
+			})
+		}
+
+		var dirs, files []fileInfo
+		count := 0
+		for _, entry := range entries {
+			if count >= 5000 {
+				break
+			}
+			name := entry.Name()
+			if strings.HasPrefix(name, ".") {
+				continue
+			}
+			entryInfo, err := entry.Info()
+			if err != nil {
+				continue
+			}
+			isDir := entry.IsDir()
+			href := base + url.PathEscape(name)
+			if isDir {
+				href += "/"
+			}
+			f := fileInfo{
+				Name:    name,
+				Size:    formatSize(entryInfo.Size()),
+				IsDir:   isDir,
+				ModTime: entryInfo.ModTime().Format("2006-01-02 15:04"),
+				Icon:    getFileIcon(name, isDir),
+				Ext:     strings.ToLower(filepath.Ext(name)),
+				Href:    href,
+			}
+			if isDir {
+				dirs = append(dirs, f)
+			} else {
+				files = append(files, f)
+			}
+			count++
+		}
+
+		sort.Slice(dirs, func(i, j int) bool { return strings.ToLower(dirs[i].Name) < strings.ToLower(dirs[j].Name) })
+		sort.Slice(files, func(i, j int) bool { return strings.ToLower(files[i].Name) < strings.ToLower(files[j].Name) })
+
+		listing = append(listing, dirs...)
+		listing = append(listing, files...)
+
+		data := pageData{
+			Title:     "FsHost \u2014 " + r.URL.Path,
+			Bread:     buildBreadcrumbs(r.URL.Path),
+			Files:     listing,
+			IPAddress: getLocalIP(),
+			Version:   version,
+			NumFiles:  len(listing),
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if err := tmpl.Execute(w, data); err != nil {
+			log.Printf("%s✖ Template error:%s %v\n", colorRed, colorReset, err)
+		}
+	})
+
+	return logMiddleware(mux)
+}
+
+func safeJoin(rootDir, urlPath string) (string, bool) {
+	clean := path.Clean(urlPath)
+	if clean == "." {
+		clean = "/"
+	}
+	full := filepath.Join(rootDir, filepath.FromSlash(clean))
+	rel, err := filepath.Rel(rootDir, full)
+	if err != nil {
+		return "", false
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return full, true
+}
+
+func escapeURLPath(p string) string {
+	segments := strings.Split(p, "/")
+	for i, s := range segments {
+		segments[i] = url.PathEscape(s)
+	}
+	return strings.Join(segments, "/")
+}
+
+func buildBreadcrumbs(urlPath string) []breadcrumbPart {
+	parts := strings.Split(strings.Trim(urlPath, "/"), "/")
+	out := make([]breadcrumbPart, 0, len(parts))
+	accum := ""
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		accum += "/" + url.PathEscape(part)
+		out = append(out, breadcrumbPart{Name: part, Path: accum + "/"})
+	}
+	return out
 }
 
 func formatSize(bytes int64) string {
@@ -242,133 +409,6 @@ func getFileIcon(name string, isDir bool) string {
 	}
 }
 
-type breadcrumbPart struct {
-	Name string
-	Path string
-}
-
-type pageData struct {
-	Title     string
-	Path      string
-	Bread     []breadcrumbPart
-	Files     []fileInfo
-	ParentDir string
-	IPAddress string
-	Version   string
-	NumFiles  int
-}
-
-func newFileServer(rootDir string) http.Handler {
-	mux := http.NewServeMux()
-
-	funcMap := template.FuncMap{
-		"fileCount": func(f []fileInfo) int { return len(f) },
-	}
-
-	tmpl := template.Must(template.New("dir").Funcs(funcMap).Parse(theme.PageTemplate))
-
-	fileServer := http.FileServer(http.Dir(rootDir))
-
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		cleanPath := filepath.Clean(r.URL.Path)
-		if cleanPath == "/" || cleanPath == "." {
-			cleanPath = "/"
-		}
-
-		fullPath := filepath.Join(rootDir, cleanPath)
-		info, err := os.Stat(fullPath)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-
-		if !info.IsDir() {
-			fileServer.ServeHTTP(w, r)
-			return
-		}
-
-		entries, err := os.ReadDir(fullPath)
-		if err != nil {
-			http.Error(w, "Cannot read directory", http.StatusInternalServerError)
-			return
-		}
-
-		files := make([]fileInfo, 0, len(entries))
-
-		if cleanPath != "/" {
-			files = append(files, fileInfo{
-				Name:    "..",
-				Size:    "-",
-				IsDir:   true,
-				ModTime: "-",
-				Icon:    "\u2B06",
-				Ext:     "",
-			})
-		}
-
-		dirs := make([]fileInfo, 0)
-		for _, entry := range entries {
-			name := entry.Name()
-			if strings.HasPrefix(name, ".") {
-				continue
-			}
-			entryInfo, err := entry.Info()
-			if err != nil {
-				continue
-			}
-			f := fileInfo{
-				Name:    name,
-				Size:    formatSize(entryInfo.Size()),
-				IsDir:   entry.IsDir(),
-				ModTime: entryInfo.ModTime().Format("2006-01-02 15:04"),
-				Icon:    getFileIcon(name, entry.IsDir()),
-				Ext:     strings.ToLower(filepath.Ext(name)),
-			}
-			if entry.IsDir() {
-				dirs = append(dirs, f)
-			} else {
-				files = append(files, f)
-			}
-			if len(dirs)+len(files)-1 > 5000 {
-				break
-			}
-		}
-		files = append(dirs, files...)
-
-		trimmedPath := strings.Trim(cleanPath, "/")
-		breadParts := make([]breadcrumbPart, 0)
-		if trimmedPath != "" {
-			parts := strings.Split(trimmedPath, "/")
-			accumPath := ""
-			for _, part := range parts {
-				accumPath += "/" + part + "/"
-				breadParts = append(breadParts, breadcrumbPart{
-					Name: part,
-					Path: accumPath,
-				})
-			}
-		}
-
-		ip := getLocalIP()
-
-		data := pageData{
-			Title:     "GoDir \u2014 " + cleanPath,
-			Path:      cleanPath,
-			Bread:     breadParts,
-			Files:     files,
-			ParentDir: filepath.Dir(strings.TrimSuffix(cleanPath, "/")),
-			IPAddress: ip,
-			Version:   version,
-			NumFiles:  len(files),
-		}
-
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		tmpl.Execute(w, data)
-	})
-
-	return logMiddleware(mux)
-}
-
 func logMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -376,18 +416,18 @@ func logMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(wrapped, r)
 		duration := time.Since(start)
 
-		status := "\033[32m"
+		statusColor := colorGreen
 		if wrapped.statusCode >= 400 {
-			status = "\033[33m"
+			statusColor = colorYellow
 		}
 		if wrapped.statusCode >= 500 {
-			status = "\033[31m"
+			statusColor = colorRed
 		}
 
 		fmt.Printf("  %s%s%d%s %s %s%s%s\n",
-			"\033[2m", status, wrapped.statusCode, "\033[0m",
+			colorDim, statusColor, wrapped.statusCode, colorReset,
 			r.URL.Path,
-			"\033[2m", duration.Round(time.Millisecond), "\033[0m")
+			colorDim, duration.Round(time.Millisecond), colorReset)
 	})
 }
 
