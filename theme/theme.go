@@ -209,7 +209,7 @@ const PageTemplate = `<!DOCTYPE html>
             <div class="logo">
                 <div class="logo-icon">&#128193;</div>
                 <div>
-                    <h1>GoDir</h1>
+                    <h1>FsHost</h1>
                     <span class="version">v{{.Version}}</span>
                 </div>
             </div>
@@ -247,11 +247,11 @@ const PageTemplate = `<!DOCTYPE html>
                             <div class="file-name">
                                 <span class="icon">{{.Icon}}</span>
                                 {{if eq .Name ".."}}
-                                    <a href="{{$.ParentDir}}">..</a>
+                                    <a href="{{.Href}}">..</a>
                                 {{else if .IsDir}}
-                                    <a href="{{$.Path}}{{.Name}}/">{{.Name}}/</a>
+                                    <a href="{{.Href}}">{{.Name}}/</a>
                                 {{else}}
-                                    <a href="{{$.Path}}{{.Name}}" download>{{.Name}}</a>
+                                    <a href="{{.Href}}" download>{{.Name}}</a>
                                 {{end}}
                             </div>
                         </td>
@@ -287,7 +287,7 @@ const PageTemplate = `<!DOCTYPE html>
                 </div>
             </div>
             <div>
-                Powered by <a href="#">GoDir</a> &mdash; Fast local file sharing
+                Powered by <a href="#">FsHost</a> &mdash; Fast local file sharing
             </div>
         </footer>
     </div>
